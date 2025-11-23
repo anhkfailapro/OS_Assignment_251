@@ -30,7 +30,7 @@ nxt=0
 grep -E "^[0-9]+[[:space:]]+" "$infile" | sort -n | {
 
 	while read nr name native ; do
-
+	
 		if [ -n "$native" ]; then
 			echo "__SYSCALL($nr, $native)"
 		fi

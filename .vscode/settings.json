@@ -1,3 +1,11 @@
 {
-    "C_Cpp.dimInactiveRegions": false
+    "C_Cpp.dimInactiveRegions": false,
+    "files.associations": {
+        "sched.h": "c",
+        "common.h": "c",
+        "syscall.h": "c",
+        "mm64.h": "c",
+        "mm.h": "c",
+        "os-cfg.h": "c"
+    }
 }
