@@ -43,47 +43,11 @@ struct vm_area_struct *get_vma_by_num(struct mm_struct *mm, int vmaid)
   return NULL;
 }
 
+/* __mm_swap_page - swap wrapper */
 int __mm_swap_page(struct pcb_t *caller, addr_t vicfpn , addr_t swpfpn)
 {
-
-  __swap_cp_page(caller->krnl->mram, vicfpn, caller->krnl->active_mswp, swpfpn);
-  return 0;
-
-  /* ????????
-      // Validate caller and required kernel memory structures
-    if (!caller || !caller->mram || !caller->active_mswp)
-        return -1;
-
-    struct memphy_struct *mram = caller->krnl->mram;
-    struct memphy_struct *mswp = caller->krnl->active_mswp;
-
-      // Copy victim frame data from RAM to swap space
-    for (addr_t offset = 0; offset < PAGING_PAGESZ; offset++) {
-        BYTE data;
-        if (MEMPHY_read(mram, vicfpn * PAGING_PAGESZ + offset, &data) < 0)
-            return -1;
-        if (MEMPHY_write(mswp, swpfpn * PAGING_PAGESZ + offset, data) < 0)
-            return -1;
-    }
-
-      // Update page table entry to mark victim page as swapped out
-    addr_t pgn = -1;
-    for (addr_t i = 0; i < PAGING_MAX_PGN; i++) {
-        uint32_t pte = pte_get_entry(caller, i);
-        if ((pte & PAGING_PTE_PRESENT_MASK) && PAGING_PTE_FPN(pte) == vicfpn) {
-            pgn = i;
-            break;
-        }
-    }
-
-    if (pgn == -1)
-        return -1;
-
-    if (pte_set_swap(caller, pgn, 0, swpfpn) < 0)
-        return -1;
-
+    __swap_cp_page(caller->krnl->mram, vicfpn, caller->krnl->active_mswp, swpfpn);
     return 0;
-*/
 }
 
 /*get_vm_area_node - get vm area for a number of pages */
@@ -133,61 +97,47 @@ int validate_overlap_vm_area(struct pcb_t *caller, int vmaid, addr_t vmastart, a
 int inc_vma_limit(struct pcb_t *caller, int vmaid, addr_t inc_sz)
 {
   struct vm_rg_struct * newrg = malloc(sizeof(struct vm_rg_struct));
-  if(!newrg) return -1;
+  int inc_amt;
+  int incnumpage;
+  
+  /* FIX: Dùng caller->mm */
   struct vm_area_struct *cur_vma = get_vma_by_num(caller->mm, vmaid);
-  if(!cur_vma) {
+  int old_end;
+
+  if (cur_vma == NULL) {
       free(newrg);
       return -1;
   }
-  /* TOTO with new address scheme, the size need tobe aligned 
-   *      the raw inc_sz maybe not fit pagesize
-   */ 
-  addr_t inc_amt;
-  int incnumpage;
 
-  addr_t old_end = cur_vma->vm_end;
+  old_end = cur_vma->vm_end;
 
-  #ifdef MM64
+#ifdef MM64
   incnumpage = (inc_sz + PAGING64_PAGESZ - 1) / PAGING64_PAGESZ;
   inc_amt = incnumpage * PAGING64_PAGESZ;
-  #else
+#else
   inc_amt = PAGING_PAGE_ALIGNSZ(inc_sz);
   incnumpage = inc_amt / PAGING_PAGESZ;
-  #endif
+#endif
 
-  addr_t new_end = cur_vma->vm_end + inc_amt;
-
-  /* TODO Validate overlap of obtained region */
-  if (validate_overlap_vm_area(caller, vmaid, old_end, new_end) < 0){
+  if (cur_vma->vm_next != NULL && old_end + inc_amt > cur_vma->vm_next->vm_start) {
     free(newrg);
-    return -1; /*Overlap and failed allocation */
+    return -1; 
   }
-  /* TODO: Obtain the new vm area based on vmaid */
-  cur_vma->vm_end = new_end;
-  cur_vma->sbrk = new_end;
 
-  newrg->rg_start = old_end;
-  newrg->rg_end = new_end;
-  newrg->rg_next = NULL;
+  cur_vma->vm_end += inc_amt;
+  cur_vma->sbrk += inc_amt;
 
- if (cur_vma->vm_freerg_list == NULL) {
-        cur_vma->vm_freerg_list = newrg;
-    } else {
-        enlist_vm_rg_node(&cur_vma->vm_freerg_list, newrg);
-    }
-
-  //inc_limit_ret...
-  /* The obtained vm area (only)
-   * now will be alloc real ram region */
-
-  if (vm_map_ram(caller, newrg->rg_start, newrg->rg_end, 
+  /* LAZY ALLOCATION:
+   * Nếu map thất bại (do hết RAM), KHÔNG rollback.
+   * Để process giữ vùng địa chỉ ảo đó, sau này truy cập sẽ swap.
+   */
+  if (vm_map_ram(caller, old_end, cur_vma->vm_end, 
                    old_end, incnumpage , newrg) < 0)
   {
-    //cur_vma->vm_end = old_end; //rollback
-    //cur_vma->sbrk = old_end;
-    return 0; /* ← SUCCESS! Virtual space is reserved */
+      // printf("DEBUG: Map RAM failed (Lazy Alloc active) for PID %d\n", caller->pid);
+      // Không rollback!
   }
-  /* Success: RAM mapped immediately */
+  
+  free(newrg);
   return 0;
 }
-
